@@ -21,8 +21,57 @@ class DoubleEliminationController extends SingleEliminationController {
   }
 
   /**
+   * Get the number of possible winners for this plugin at the end of each round.
+   *
+   * @param $num_contestants
+   *   Finds the number of winners in each round after the first.
+   */
+  public static function possibleWinners($num_contestants) {
+    // Still factoring out how to determine
+    // amount of possible winners.
+    $count = array(1, 2, 3, 4, 5, 6);
+    return $count;
+  }
+
+  /**
+   * Options for this plugin.
+   */
+  public function optionsForm(&$form_state) {
+    $this->getPluginOptions();
+    $options = $this->pluginOptions;
+    $plugin_options = array_key_exists(get_class($this), $options) ? $options[get_class($this)] : array();
+
+    $form = parent::optionsForm($form_state);
+
+    if (array_key_exists('values', $form_state)) {
+      $players = $form_state['values']['plugin_options'][$form_state['values']['format']]['players'] ?: $players = $form_state['tourney']->players;
+      $possible = self::possibleWinners($players);
+    }
+    else if (is_a($form_state['tourney'], 'TourneyTournamentEntity')) {
+      $possible = self::possibleWinners($form_state['tourney']->players);
+    }
+    else {
+      $possible = array(1);
+    }
+
+    $form['num_winners'] = array(
+      '#type' => 'select',
+      '#title' => t('How many winners does this tournament have?'),
+      '#options' => drupal_map_assoc($possible),
+      '#prefix' => '<div id="DoubleEliminationController_replace_num_winners">',
+      '#suffix' => '</div>',
+      '#default_value' => array_key_exists('num_winners', $plugin_options)
+        ? $plugin_options['num_winners'] : -1,
+      '#description' => t('Setting more than one winner will hide matches that occur after the winner count is met.')
+      /** @todo: We should think about not even creating the matches */
+    );
+
+    return $form;
+  }
+
+  /**
    * Preprocess variables for the template passed in.
-   * 
+   *
    * @param $template
    *   The name of the template that is being preprocessed.
    * @param $vars
@@ -36,11 +85,11 @@ class DoubleEliminationController extends SingleEliminationController {
 
       if (!isset($this->pluginOptions['show_byes']) || $this->pluginOptions['show_byes'] == FALSE)
         $this->removeByes($node);
-      
+
       // New tree should start from the second to last match.
       // $match = $this->data['matches'][15];
       // $last_node = $this->structureTreeNode($match);
-      
+
       // Render the consolation bracket out.
       $vars['matches'] .= theme('tourney_tournament_tree_node', array('plugin' => $this, 'node' => $node));
     }
@@ -55,7 +104,7 @@ class DoubleEliminationController extends SingleEliminationController {
       foreach ($node['children'] as &$child) $this->removeByes($child);
     }
   }
-  
+
   public function buildBrackets() {
     parent::buildBrackets();
     $this->data['brackets']['loser'] = $this->buildBracket(array(
@@ -67,28 +116,28 @@ class DoubleEliminationController extends SingleEliminationController {
       'rounds' => 2,
     ));
   }
-  
+
   public function buildMatches() {
     parent::buildMatches();
     $this->buildBottomMatches();
     $this->buildChampionMatches();
   }
-  
+
   public function buildBottomMatches() {
     $match = &drupal_static('match', 0);
     $round = &drupal_static('round', 0);
-    
+
     // Rounds is a certain number, 2, 4, 6, based on the contestants
     $num_rounds = (log($this->slots, 2) - 1) * 2;
     foreach (range(1, $num_rounds) as $round_num) {
       // Bring the round number down to a unique number per group of two
       $round_group = ceil($round_num / 2);
-      
+
       // Matches is a certain number based on the round number and slots
       // The pattern is powers of two, counting down: 8 8 4 4 2 2 1 1
 
       $num_matches = $this->slots / pow(2, $round_group + 1);
-      $this->data['rounds'][++$round] = 
+      $this->data['rounds'][++$round] =
         $this->buildRound(array('id' => $round_num, 'bracket' => 'loser', 'matches' => $num_matches));
 
       foreach (range(1, $num_matches) as $roundMatch) {
@@ -102,11 +151,45 @@ class DoubleEliminationController extends SingleEliminationController {
       }
     }
   }
-  
+
+  /**
+   * Adds data to the matches data in the plugin for matches that should not be visible.
+   */
+  public function populateIrrelevantMatches() {
+    $options = $this->getPluginOptions();
+    $num_winners = $options[get_class($this)]['num_winners'];
+    if ($num_winners > 1) {
+      // Find last round we need to show.
+      $last_round = array();
+      $num_match_last_round = $num_winners; // Number of matches in last round.
+      foreach ($this->data['matches'] as $id => &$match) {
+        if (!isset($last_round[$match['bracket']][$match['round']])) {
+          $last_round[$match['bracket']][$match['round']] = 0;
+        }
+        $last_round[$match['bracket']][$match['round']]++;
+      }
+      foreach ($this->data['matches'] as $id => &$match) {
+        if ($match['bracket'] == 'main') {
+          if (($last_round['main'][$match['round']] + $last_round['loser'][$match['round'] + 1]) < $num_match_last_round) {
+            $match['hide'] = TRUE;
+          }
+        }
+        elseif ($match['bracket'] == 'loser') {
+          if (($last_round['main'][$match['round'] - 1] + $last_round['loser'][$match['round']]) < $num_match_last_round) {
+            $match['hide'] = TRUE;
+          }
+        }
+        else {
+          $match['hide'] = TRUE;
+        }
+      }
+    }
+  }
+
   public function buildChampionMatches() {
     $match = &drupal_static('match', 0);
     $round = &drupal_static('round', 0);
-    
+
     foreach (array(1, 2) as $round_num) {
       $this->data['rounds'][++$round] = $this->buildRound(array(
         'id' => $round_num,
@@ -122,7 +205,7 @@ class DoubleEliminationController extends SingleEliminationController {
       ));
     }
   }
-  
+
   /**
    * Find and populate next/previous match pathing on the matches data array for
    * each match.
@@ -182,7 +265,7 @@ class DoubleEliminationController extends SingleEliminationController {
   /**
    * Populates nextMatch and previousMatches array on the match data that has
    * already been built from parent class.
-   * 
+   *
    * @todo: Clean this function up... Way too complicated.
    */
   public function populateLoserPositions() {
@@ -196,9 +279,9 @@ class DoubleEliminationController extends SingleEliminationController {
       if ($match['round'] == 1) {
         if ($oddRounds) {
           $target = ceil($match['roundMatch'] / 2);
-        } 
+        }
         else {
-          $target = (ceil($match['roundMatch'] / 2) + ceil($roundMatchesHalf / 2) - 1) % $roundMatchesHalf + 1;          
+          $target = (ceil($match['roundMatch'] / 2) + ceil($roundMatchesHalf / 2) - 1) % $roundMatchesHalf + 1;
         }
         $slot = $match['roundMatch'] % 2 ? 2 : 1;
         $properties['round']      = 1;
@@ -228,11 +311,11 @@ class DoubleEliminationController extends SingleEliminationController {
       'slot' => 2,
     );
   }
-  
+
   /**
    * Look at each match in the data array and count how many matches are in the
    * given round passed in.
-   * 
+   *
    * @param $bracket
    *   The machine name of the bracket.
    * @param $round
@@ -247,7 +330,7 @@ class DoubleEliminationController extends SingleEliminationController {
     }
     return $count;
   }
-  
+
   /**
    * Calculate and fill seed data into matches. Also marks matches as byes if
    * the match is a bye.
@@ -261,7 +344,7 @@ class DoubleEliminationController extends SingleEliminationController {
         $this->data['matches'][$match['nextMatch']['loser']['id']]['bye'] = TRUE;
       }
     }
-    
+
     $this->populateLoserByes();
 
 
@@ -271,14 +354,14 @@ class DoubleEliminationController extends SingleEliminationController {
       $winner = $match['nextMatch']['winner'];
       foreach ($match['previousMatches'] as $k => $v) {
         $prev = &$this->data['matches'][$v];
-        if (isset($prev['bye']) && $prev['bye'] == TRUE) continue; 
+        if (isset($prev['bye']) && $prev['bye'] == TRUE) continue;
         $prev['nextMatch']['loser'] = array('id' => $winner['id'], 'slot' => $winner['slot']);
       }
     }
 
     $this->adjustLoserByes();
   }
-  
+
 
   public function adjustLoserByes() {
     $matches = &$this->find('matches', array('bracket' => 'loser', 'round' => 3));
@@ -293,7 +376,7 @@ class DoubleEliminationController extends SingleEliminationController {
       $previousWinner = &$this->data['matches'][$previousBye['previousMatches'][1]];
       $previousWinner['nextMatch']['loser']['slot'] = 1;
       $previousLoser['nextMatch']['winner']['slot'] = 2;
-    } 
+    }
   }
 
   /**
@@ -316,7 +399,7 @@ class DoubleEliminationController extends SingleEliminationController {
   }
 
   public function structureTreeNode($match) {
-   // if ($match['bracket'] != 'loser') return parent::structureTreeNode($match);
+    // if ($match['bracket'] != 'loser') return parent::structureTreeNode($match);
     $node = $match;
     if (isset($match['previousMatches'])) {
       foreach (array_unique($match['previousMatches']) as $child) {
