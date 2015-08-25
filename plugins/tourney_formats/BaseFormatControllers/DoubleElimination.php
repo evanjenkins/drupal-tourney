@@ -169,13 +169,8 @@ class DoubleEliminationController extends SingleEliminationController {
         $last_round[$match['bracket']][$match['round']]++;
       }
       foreach ($this->data['matches'] as $id => &$match) {
-        if ($match['bracket'] == 'main') {
-          if (($last_round['main'][$match['round']] + $last_round['loser'][$match['round'] + 1]) < $num_match_last_round) {
-            $match['hide'] = TRUE;
-          }
-        }
-        elseif ($match['bracket'] == 'loser') {
-          if (($last_round['main'][$match['round'] - 1] + $last_round['loser'][$match['round']]) < $num_match_last_round) {
+        if ($match['bracket'] == 'main' || $match['bracket'] == 'loser') {
+          if (($last_round['main'][$match['round']] + $last_round['loser'][$match['round']]) < $num_match_last_round) {
             $match['hide'] = TRUE;
           }
         }
